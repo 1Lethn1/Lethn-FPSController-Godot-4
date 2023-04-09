@@ -1,0 +1,274 @@
+extends CharacterBody3D
+
+var playerHealth = 100
+var ammoFRPistolMagazine = 12
+var ammoFRPistolTotal = 0
+
+var mouseSensitivity = 0.2
+var defaultMoveSpeed = 700
+var sprintMoveSpeed = 900
+var crouchMoveSpeed = 200
+
+const lerpSpeed = 20
+
+var speed = defaultMoveSpeed
+var jumpVelocity = 3.8
+var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+var velocityY = 0
+
+@onready var mouseLookNode = $MouseLookNode
+@onready var playerCollisionShape = $PlayerCollisionShape
+@onready var playerCamera = $MouseLookNode/PlayerCamera
+@onready var playerRaycast = $MouseLookNode/PlayerCamera/PlayerRaycast
+
+@onready var raycastCeilingCheck = $RaycastCeilingCheck
+@onready var groundCheck = $RaycastGroundCheck
+
+@export var defaultCameraHeight : Vector3
+@export var crouchCameraHeight : Vector3
+
+@export var defaultAimPosition : Vector3
+@export var ADSAimPosition : Vector3
+
+@export var defaultFOV = 75
+@export var ADSFOV = 60.8
+
+@onready var playerCrouchingCollisionShape = $CrouchCollisionShape
+
+@onready var flashlight = $MouseLookNode/PlayerCamera/Flashlight
+var isFlashlightEnabled = false
+
+var isHittingCeiling = false
+var isCrouching = false
+var isSprinting = false
+var isTouchingLadder = false
+
+var horizontalVelocity
+
+var playerRaycastCollision
+
+@onready var FireRateTimer = $FireRateTimer
+@onready var coolDownTimer = $CooldownTimer
+
+@onready var FRPistolRaycastsSpreadNode = $MouseLookNode/FreeRepublicPistolRaycastSpread
+@onready var FRPistol = $"MouseLookNode/PlayerCamera/Free Republic Pistol"
+@onready var FRPistolMuzzleFlash = $"MouseLookNode/PlayerCamera/Free Republic Pistol/FRPistolMuzzleFlash"
+@onready var FRPistolMuzzleFlash2 = $"MouseLookNode/PlayerCamera/Free Republic Pistol/FRPistolMuzzleFlash2"
+@onready var FRPistolMuzzleFlash3 = $"MouseLookNode/PlayerCamera/Free Republic Pistol/FRPistolMuzzleFlash3"
+@onready var muzzleFlashLight = $MouseLookNode/MuzzleFlashLight
+
+@onready var FRPistolAnimationPlayer = $"MouseLookNode/PlayerCamera/Free Republic Pistol/FRPistolAnimationPlayer"
+
+
+@onready var SingleRaycast = $MouseLookNode/SingleRayCast1
+var defaultSingleRaycastPosition = Vector3(0, -0.026, -0.032)
+
+var plasmaBulletHole = preload ("res://plasma_bullet_hole_node.tscn")
+
+var isFRPistolEquipped = false
+var canFire = false
+var isAiming = false
+
+var surfaceDirectionUp = Vector3 (0, 1, 0)
+var surfaceDirectionDown = Vector3 (0, -1, 0)
+
+func _ready():
+	canFire = true
+	isFRPistolEquipped = true
+	
+	isTouchingLadder = false
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	playerCamera.make_current()
+	isCrouching = false
+	playerCollisionShape.set_deferred(("disabled"), false)
+	playerCrouchingCollisionShape.set_deferred(("disabled"), true)
+	
+
+func _unhandled_input(event):
+	if event is InputEventMouseMotion:
+		rotate_y(deg_to_rad(mouseSensitivity * -event.relative.x))
+		
+		mouseLookNode.rotate_x(deg_to_rad(mouseSensitivity * -event.relative.y))
+		mouseLookNode.rotation.x = clamp(mouseLookNode.rotation.x, deg_to_rad(-89), deg_to_rad(89))
+		
+func _process(delta):
+	pass
+		
+func _physics_process(delta):
+	
+	if isTouchingLadder == true:
+		velocityY = 0
+		gravity = 0
+		velocity = Vector3.ZERO
+	
+	if Input.is_action_pressed("Aim"):
+		FRPistol.transform.origin = FRPistol.transform.origin.lerp(ADSAimPosition, lerpSpeed * delta)
+		playerCamera.fov = lerpf(playerCamera.fov, ADSFOV, lerpSpeed * delta)
+		isAiming = true
+	else:
+		FRPistol.transform.origin = FRPistol.transform.origin.lerp(defaultAimPosition, lerpSpeed * delta)
+		playerCamera.fov = lerpf(playerCamera.fov, defaultFOV, lerpSpeed * delta)
+		isAiming = false
+	
+	if Input.is_action_pressed("Fire") and canFire == true and isAiming == true:
+		if SingleRaycast.is_colliding() == true:
+			
+			FRPistolAnimationPlayer.play("FRPistolADSRecoil")
+			var plasmaBulletHoleChild = plasmaBulletHole.instantiate()
+			get_tree().get_root().add_child(plasmaBulletHoleChild)
+			plasmaBulletHoleChild.global_transform.origin = SingleRaycast.get_collision_point()
+			
+			FRPistolMuzzleFlash.emitting = true
+			FRPistolMuzzleFlash2.emitting = true
+			FRPistolMuzzleFlash3.emitting = true
+			muzzleFlashLight.visible = true
+			
+			SingleRaycast.transform.origin = Vector3(randf_range(-0.1, 0.1), randf_range(-0.1, 0.1), -0.032)
+			
+			if SingleRaycast.get_collision_normal() == surfaceDirectionUp:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.RIGHT)
+			elif SingleRaycast.get_collision_normal() == surfaceDirectionDown:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.RIGHT)
+			else:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.UP)
+			
+			canFire = false
+			FireRateTimer.start()
+			
+	elif canFire == false:
+		muzzleFlashLight.visible = false
+	
+	if Input.is_action_pressed("Fire") and canFire == true and isCrouching == false:
+		if SingleRaycast.is_colliding() == true:
+			
+			FRPistolAnimationPlayer.play("recoilFRPistol")
+			var plasmaBulletHoleChild = plasmaBulletHole.instantiate()
+			get_tree().get_root().add_child(plasmaBulletHoleChild)
+			plasmaBulletHoleChild.global_transform.origin = SingleRaycast.get_collision_point()
+			
+			FRPistolMuzzleFlash.emitting = true
+			FRPistolMuzzleFlash2.emitting = true
+			FRPistolMuzzleFlash3.emitting = true
+			muzzleFlashLight.visible = true
+			
+			SingleRaycast.transform.origin = Vector3(randf_range(-0.8, 0.8), randf_range(-0.8, 0.8), -0.032)
+			
+			if SingleRaycast.get_collision_normal() == surfaceDirectionUp:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.RIGHT)
+			elif SingleRaycast.get_collision_normal() == surfaceDirectionDown:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.RIGHT)
+			else:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.UP)
+			
+			canFire = false
+			FireRateTimer.start()
+			
+	elif canFire == false and isCrouching == false:
+		muzzleFlashLight.visible = false
+	
+	if Input.is_action_pressed("Fire") and canFire == true and isCrouching == true:
+		if SingleRaycast.is_colliding() == true:
+			
+			FRPistolAnimationPlayer.play("recoilFRPistol")
+			var plasmaBulletHoleChild = plasmaBulletHole.instantiate()
+			get_tree().get_root().add_child(plasmaBulletHoleChild)
+			plasmaBulletHoleChild.global_transform.origin = SingleRaycast.get_collision_point()
+			
+			FRPistolMuzzleFlash.emitting = true
+			FRPistolMuzzleFlash2.emitting = true
+			FRPistolMuzzleFlash3.emitting = true
+			muzzleFlashLight.visible = true
+			
+			
+			SingleRaycast.transform.origin = Vector3(randf_range(-0.8, 0.8), randf_range(-0.8, 0.8), -0.032)
+			
+			if SingleRaycast.get_collision_normal() == surfaceDirectionUp:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.RIGHT)
+			elif SingleRaycast.get_collision_normal() == surfaceDirectionDown:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.RIGHT)
+			else:
+				plasmaBulletHoleChild.look_at(SingleRaycast.get_collision_point() + SingleRaycast.get_collision_normal(), Vector3.UP)
+			
+			canFire = false
+			FireRateTimer.start()
+			
+	elif canFire == false:
+		muzzleFlashLight.visible = false
+		
+	
+	if Input.is_action_pressed("W") and isTouchingLadder == true:
+		velocityY += 300 * delta
+	if Input.is_action_pressed("S") and isTouchingLadder == true:
+		velocityY -= 300 * delta
+	elif Input.is_action_just_pressed("Space") and isTouchingLadder == true:
+		velocityY = jumpVelocity
+		isTouchingLadder = false
+	elif isTouchingLadder == false:
+		gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+		horizontalVelocity = Input.get_vector("A", "D", "W", "S").normalized() * speed * delta
+		velocity = horizontalVelocity.x * global_transform.basis.x + horizontalVelocity.y * global_transform.basis.z
+	
+	if groundCheck.is_colliding():
+		if Input.is_action_just_pressed("Space") and not raycastCeilingCheck.is_colliding():
+			velocityY = jumpVelocity
+			isTouchingLadder = false
+	elif not groundCheck.is_colliding() and isTouchingLadder == false:
+		velocityY -= gravity * delta
+		
+	velocity.y = velocityY
+	move_and_slide()
+
+	if Input.is_action_pressed("Crouch") and isCrouching == false and isTouchingLadder == false:
+		isCrouching = true
+		playerCollisionShape.set_deferred(("disabled"), true)
+		playerCrouchingCollisionShape.set_deferred(("disabled"), false)
+		mouseLookNode.transform.origin = mouseLookNode.transform.origin.lerp(crouchCameraHeight, delta * 50)
+		speed = crouchMoveSpeed
+	elif Input.is_action_just_released("Crouch") and isCrouching == true and raycastCeilingCheck.is_colliding() and isTouchingLadder == false:
+		isCrouching = true
+		playerCollisionShape.set_deferred("disabled", true)
+		playerCrouchingCollisionShape.set_deferred("disabled", false)
+		mouseLookNode.transform.origin = mouseLookNode.transform.origin.lerp(crouchCameraHeight, delta * 50)
+		speed = crouchMoveSpeed
+	elif not Input.is_action_pressed("Crouch") and isCrouching == true and raycastCeilingCheck.is_colliding() and isTouchingLadder == false:
+		isCrouching = true
+		playerCollisionShape.set_deferred("disabled", true)
+		playerCrouchingCollisionShape.set_deferred("disabled", false)
+		mouseLookNode.transform.origin = mouseLookNode.transform.origin.lerp(crouchCameraHeight, delta * 50)
+		speed = crouchMoveSpeed
+	elif not Input.is_action_pressed("Crouch") and isCrouching == true and not raycastCeilingCheck.is_colliding() and isTouchingLadder == false:
+		isCrouching = false
+		playerCollisionShape.set_deferred("disabled", false)
+		playerCrouchingCollisionShape.set_deferred("disabled", true)
+		mouseLookNode.transform.origin = mouseLookNode.transform.origin.lerp(defaultCameraHeight, delta * 50)
+		speed = defaultMoveSpeed
+
+	if Input.is_action_pressed("Shift") and isCrouching == false and groundCheck.is_colliding() and not raycastCeilingCheck.is_colliding():
+		isSprinting = true
+		speed = sprintMoveSpeed
+	elif Input.is_action_just_released("Shift") and isCrouching == false and groundCheck.is_colliding() and not raycastCeilingCheck.is_colliding():
+		isSprinting = false
+		speed = defaultMoveSpeed
+		
+	if Input.is_action_just_pressed("F") and isFlashlightEnabled == false:
+		flashlight.visible = true
+		isFlashlightEnabled = true
+	elif Input.is_action_just_pressed("F") and isFlashlightEnabled == true:
+		flashlight.visible = false
+		isFlashlightEnabled = false
+		
+
+
+func _on_ladder_area_3d_body_entered(body):
+	isTouchingLadder = true
+
+func _on_ladder_area_3d_body_exited(body):
+	isTouchingLadder = false
+
+
+func _on_fr_pistol_fire_rate_timer_timeout():
+	canFire = true
+
+
+func _on_cooldown_timer_timeout():
+	pass
